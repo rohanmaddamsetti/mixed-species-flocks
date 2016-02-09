@@ -11,17 +11,21 @@
 
 import random, math
 import tkinter as tk
+from time import sleep
+from attraction_rules import * # the file containing edge weights for birds and target.
 
 ## Global variables which are shorthand for bird species.
-ANTSHRIKE = 0
-ANTWREN = 1
+## Target is defined for the attraction matrix.
+TARGET = 0
+ANTSHRIKE = 1
+ANTWREN = 2
+OTHER = 3
 
-def xy_dist(angle, dist):
-#    '''The x and y distances corresponding to a distance dist in angle.'''
-    radian_angle = math.radians(angle)
-#    ## return is x,y tuple
-    return (dist * math.cos(radian_angle), dist * math.sin(radian_angle))
-
+def vec_length(vec):
+    '''return length of a vector in x,y coordinates'''
+    x,y = vec
+    return math.sqrt(x**2 + y**2)
+    
 class WorldFrame(tk.Frame):
     ''' A Frame in which to display the world. This is a subclass of the 
     Tk Frame object. Each unit is a pixel represents 1 meter, so 400mx400m world.'''
@@ -66,9 +70,9 @@ class World(tk.Canvas):
 
         # neighborhood is radius of region around coords in which pairs appear.
         neighborhood = 20
-        coords = coords or self.random_bird_coords()
+        coords = coords or self.random_coords()
         coords1 = coords
-        coords2 = tuple(i+random.choice([-1,1])*random.uniform(Bird.rad,neighborhood) for i in coords )
+        coords2 = [i+random.choice([-1,1])*random.uniform(Bird.rad,neighborhood) for i in coords]
         bird1 = Bird(species, self, coords1)
         bird2 = Bird(species, self, coords2)
         self.flock.append(bird1)
@@ -76,8 +80,8 @@ class World(tk.Canvas):
         self.flock.append(bird2)
         self.graphic_objs[bird2.graphic_id] = bird2
 
-    def random_bird_coords(self):
-        return random.uniform(0,self.width), random.uniform(0,self.height)
+    def random_coords(self):
+        return [random.uniform(0,self.width), random.uniform(0,self.height)]
 
     def adjust_coords(self,coords):
         '''adjust coordinates of bird, assuming donut world'''
@@ -93,36 +97,44 @@ class World(tk.Canvas):
         return x, y
 
     def step(self):
+        for bird in self.flock:
+            bird.calc_direction_vec()
+            bird.move()
+            print(bird.coords)
+
+    def draw_one_frame(self):
         pass
-    
+
     def run(self):
         ''' Run the simulation'''
         ## First, add birds to the flock.
         self.add_species_pair(ANTSHRIKE)
         self.add_species_pair(ANTWREN)
-        #for bird in self.flock:
-        #    bird.calc_direction_vec()
-        #for s in range(World.time_steps_per_run):
-            # TODO: in each time step, move the flock.   
-            #self.update_idletask()
+        self.draw_one_frame()
+        for s in range(World.time_steps_per_run):
+            self.after(100,self.step())
+            print()
+            self.draw_one_frame()
+            self.update_idletasks()
             
 class Bird:
     ''' Birds can be ANTSHRIKE (leaders),
     ANTWREN (followers that occasionally peel out),
-    or integers 2 and above representing additional follower species.'''
+    or integers 3 and above representing additional follower species.'''
     
     rad = 5 #each bird has a radius of space.
     percept = 2000 #each bird has a radius of perception.
-        
+    target_location = None ## antshrikes (occasionally antwrens) have a target in the world
+
+    
     def __init__(self, species, world, coords):
         self.species = species
         self.world = world
         self.coords = coords
-        ## direction is a dict with polar coordinates.
-        ##initially, bird does not go anywhere.
-        self.direction = {'r':0, 'theta':0}
+        self.direction = [0,0] ## in x,y coordinates, don't go anywhere.
         if self.species == ANTSHRIKE:
             self.color = "purple"
+            self.target = world.random_coords() # random target location.
         elif self.species == ANTWREN:
             self.color = "green"
         else:
@@ -156,18 +168,43 @@ class Bird:
         ## find birds within perception range.
         for bird in self.world.flock:
             if self.observes(bird):
-                seen_birds.append((bird.species,bird.coords))
-       # dir_vec = [0,0]
-       # for rel_bird in seen_birds:
-       #     other_species,other_coords = rel_bird
-       #     other_x, other_y = other_coords
-       #     dir_vec = dir_vec + ## a weighted sum of this bird.
+                seen_birds.append(bird)
+        my_x, my_y = self.coords
+        
+        my_dir_vec = [0,0]
+        if self.target_location:
+            dir_vec = [self.target_location[0] - my_x, self.target_location[1] - my_y]
+            dir_vec_len = vec_length(dir_vec)
+            if dir_vec_len > 0:
+                unit_dir_vec = [i/dir_vec_len for i in dir_vec]
+                my_dir_vec = [attraction_matrix[self.species][0] * i for i in unit_dir_vec]
+        bird_weight = 1/len(seen_birds)
+        for rel_bird in seen_birds:
+            other_species = rel_bird.species
+            other_coords = rel_bird.coords
+            other_x, other_y = other_coords
+            ## my_dir_vec is a weighted sum of unit vectors in the direction
+            ## of other birds in the flock and a desired direction.
+            ## if the particular bird is too close, then move in the opposite direction.
+            bird_dist_vec = ([other_x - my_x, other_y - my_y])
+            bird_dist_vec_length = vec_length(bird_dist_vec)
+            if bird_dist_vec_length > 0:
+                bird_unit_vec = [i/bird_dist_vec_length for i in bird_dist_vec]
+                my_dir_vec = [i + attraction_matrix[self.species][rel_bird.species]*j for i,j in zip(my_dir_vec,bird_unit_vec)]
+        self.direction = my_dir_vec
+
+    def move(self):
+        self.coords = [i+j for i,j in zip(self.coords,self.direction)]
+        self.coords = self.world.adjust_coords(self.coords)
+        x,y = self.coords
+        self.world.coords(self.graphic_id,
+                          x - Bird.rad, y - Bird.rad,
+                          x+ Bird.rad, y + Bird.rad)
 
 def main():
     root = tk.Tk()
     amazon_donut = WorldFrame(root)
-    amazon_donut2 = WorldFrame(root)
     amazon_donut.world.run()
     root.mainloop()
-
+    
 main()

@@ -9,6 +9,9 @@
 ## NOTE: units in the display and in space are all fucked up.
 ##       right now, just trying to get stuff to display and work.
 
+## Use numpy to implement vectors to make the math easier.
+
+
 import random, math
 import tkinter as tk
 from time import sleep
@@ -98,8 +101,11 @@ class World(tk.Canvas):
 
     def step(self):
         for bird in self.flock:
+            bird_image = self.graphic_obj[bird.graphic_id]
             bird.calc_direction_vec()
-            bird.move()
+            bird.move() # this updates the birds coordinates.
+            self.update()
+            
             print(bird.coords)
 
     def draw_one_frame(self):
@@ -112,7 +118,7 @@ class World(tk.Canvas):
         self.add_species_pair(ANTWREN)
         self.draw_one_frame()
         for s in range(World.time_steps_per_run):
-            self.after(100,self.step())
+            self.after(10,self.step())
             print()
             self.draw_one_frame()
             self.update_idletasks()

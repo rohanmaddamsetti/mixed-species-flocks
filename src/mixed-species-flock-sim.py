@@ -3,19 +3,22 @@
 ## mixed-species-flock-sim.py by Rohan Maddamsetti
 ## Usage: python3 mixed-species-flock-sim.py
 
-## I borrowed much code from http://www.indiana.edu/~q320/Code/hw3_320.py
+## I borrowed code from http://www.indiana.edu/~q320/Code/hw3_320.py
 ## to get started.
 
 ## NOTE: units in the display and in space are all fucked up.
 ##       right now, just trying to get stuff to display and work.
 
-## Use numpy to implement vectors to make the math easier.
+## TODO: Use numpy to implement vectors to make the math easier.
+## make an animation with matplotlib, save a bunch of frames and stitch together.
 
 
 import random, math
-import tkinter as tk
-from time import sleep
 from attraction_rules import * # the file containing edge weights for birds and target.
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 
 ## Global variables which are shorthand for bird species.
 ## Target is defined for the attraction matrix.
@@ -29,48 +32,25 @@ def vec_length(vec):
     x,y = vec
     return math.sqrt(x**2 + y**2)
     
-class WorldFrame(tk.Frame):
-    ''' A Frame in which to display the world. This is a subclass of the 
-    Tk Frame object. Each unit is a pixel represents 1 meter, so 400mx400m world.'''
-
-    def __init__(self, root, width=400,height=400):
-        '''give the frame a canvas, a world, and dimensions and display it.'''
-        tk.Frame.__init__(self,root)
-        self.world = World(self,width=width,height=height)
-        root.title('Amazon Donut World')
-        self.grid()
-
 ### TODO: Code up territories for birds. The territory effect on direction
 ### is that birds drop out of the flock when the flock crosses the boundary.
 
 ### species pair territories are a voronoi tiling of the world (no overlap for
 ### a single species). Different species have different tilings that overlap.
 
-class World(tk.Canvas):
-    '''The arena where everything happens, including both graphics and
-    bird representation. This is a subclass of a Canvas object.'''
+class World:
 
-    ## Spatial scale: 200-300 meters across for a single territory.
-    ## Move like a meter per minute.
-    ## Each time step is 1 minute, so each movement is 1 meter.
-    ## Let's make each run last 300 minutes.
-    ## Right now, this is a simulation of a single large territory.
-    time_steps_per_run = 300
-
-    def __init__(self, frame, width=400,height=400):
-        '''initialize dimensions and create things'''
-        tk.Canvas.__init__(self, frame, width=width,height=height)
-        self.frame = frame
-        self.width = width
-        self.height = height
+    def __init__(self):
         self.flock = []
-        self.graphic_objs = {}
-        self.grid()
+        self.xmax=400
+        self.ymax=400
 
-    def add_species_pair(self, species, coords=None):
+    def random_coords(self):
+        return [random.uniform(0,self.xmax), random.uniform(0,self.ymax)]
+
+    def add_species_pair(self, species,coords=None):
         '''add a pair of a given species at a random location.
         put second bird in a random nearby location.'''
-
         # neighborhood is radius of region around coords in which pairs appear.
         neighborhood = 20
         coords = coords or self.random_coords()
@@ -79,50 +59,8 @@ class World(tk.Canvas):
         bird1 = Bird(species, self, coords1)
         bird2 = Bird(species, self, coords2)
         self.flock.append(bird1)
-        self.graphic_objs[bird1.graphic_id] = bird1
         self.flock.append(bird2)
-        self.graphic_objs[bird2.graphic_id] = bird2
 
-    def random_coords(self):
-        return [random.uniform(0,self.width), random.uniform(0,self.height)]
-
-    def adjust_coords(self,coords):
-        '''adjust coordinates of bird, assuming donut world'''
-        x, y = coords
-        if x < 0:
-            x = self.width + x
-        elif x > self.width:
-            x = x - self.width
-        if y < 0:
-            y = self.height + y
-        elif y > self.height:
-            y = y - self.height
-        return x, y
-
-    def step(self):
-        for bird in self.flock:
-            bird_image = self.graphic_obj[bird.graphic_id]
-            bird.calc_direction_vec()
-            bird.move() # this updates the birds coordinates.
-            self.update()
-            
-            print(bird.coords)
-
-    def draw_one_frame(self):
-        pass
-
-    def run(self):
-        ''' Run the simulation'''
-        ## First, add birds to the flock.
-        self.add_species_pair(ANTSHRIKE)
-        self.add_species_pair(ANTWREN)
-        self.draw_one_frame()
-        for s in range(World.time_steps_per_run):
-            self.after(10,self.step())
-            print()
-            self.draw_one_frame()
-            self.update_idletasks()
-            
 class Bird:
     ''' Birds can be ANTSHRIKE (leaders),
     ANTWREN (followers that occasionally peel out),
@@ -145,15 +83,7 @@ class Bird:
             self.color = "green"
         else:
             self.color = "orange"
-        self.make_graphical_object()
         
-    def make_graphical_object(self):
-        ''' Create the Canvas object for the bird: a circle.'''
-        x, y = self.coords
-        self.graphic_id = self.world.create_oval(x-Bird.rad,y-Bird.rad,
-                                                 x+Bird.rad,y+Bird.rad,
-                                                 fill=self.color,
-                                                 outline="black")
     def observes(self,bird):
         '''Can I see the nearby bird?'''
         my_x,my_y = self.coords
@@ -201,16 +131,58 @@ class Bird:
 
     def move(self):
         self.coords = [i+j for i,j in zip(self.coords,self.direction)]
-        self.coords = self.world.adjust_coords(self.coords)
-        x,y = self.coords
-        self.world.coords(self.graphic_id,
-                          x - Bird.rad, y - Bird.rad,
-                          x+ Bird.rad, y + Bird.rad)
+        self.adjust_coords()
+        
+    def adjust_coords(self):
+        '''adjust coordinates of bird, assuming donut world'''
+        x, y = self.coords
+        if x < 0:
+            x = self.world.xmax + x
+        elif x > self.world.xmax:
+            x = x - self.world.xmax
+        if y < 0:
+            y = self.world.ymax + y
+        elif y > self.world.ymax:
+            y = y - self.world.ymax
+        self.coords = x, y
+
+        
+def update(i, fig, scat, world):
+    '''callback function for the animation, also one step in the world '''
+    for bird in world.flock:
+        #print(bird.coords)
+        bird.calc_direction_vec()
+        bird.move() # this updates the birds coordinates.
+    flocka_x = [bird.coords[0] for bird in world.flock]
+    flocka_y = [bird.coords[1] for bird in world.flock]
+    scat = plt.scatter(flocka_x,flocka_y)
+    return scat,
+
 
 def main():
-    root = tk.Tk()
-    amazon_donut = WorldFrame(root)
-    amazon_donut.world.run()
-    root.mainloop()
+
+    ## Spatial scale: 200-300 meters across for a single territory.
+    ## Move like a meter per minute.
+    ## Each time step is 1 minute, so each movement is 1 meter.
+    ## Let's make each run last 300 minutes.
+    ## Right now, this is a simulation of a single large territory.
+    time_steps = 300
+
+    amazon_donut = World()
+    ## add birds to the flock.
+    amazon_donut.add_species_pair(ANTSHRIKE)
+    amazon_donut.add_species_pair(ANTWREN)
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.grid()
+    ax.set_xlim([0,400])
+    ax.set_ylim([0,400])
+    flocka_x = [bird.coords[0] for bird in amazon_donut.flock]
+    flocka_y = [bird.coords[1] for bird in amazon_donut.flock]
+    scat = plt.scatter(flocka_x,flocka_y)
+    scat.set_alpha(0.8)
+    ani = animation.FuncAnimation(fig, update, fargs=(fig,scat,amazon_donut),
+                                  frames=time_steps, interval=100)
+    plt.show()
     
 main()

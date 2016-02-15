@@ -3,15 +3,8 @@
 ## mixed-species-flock-sim.py by Rohan Maddamsetti
 ## Usage: python3 mixed-species-flock-sim.py
 
-## I borrowed code from http://www.indiana.edu/~q320/Code/hw3_320.py
-## to get started.
-
 ## NOTE: units in the display and in space are all fucked up.
 ##       right now, just trying to get stuff to display and work.
-
-## TODO: Use numpy to implement vectors to make the math easier.
-## make an animation with matplotlib, save a bunch of frames and stitch together.
-
 
 import random, math
 from attraction_rules import * # the file containing edge weights for birds and target.
@@ -26,11 +19,6 @@ TARGET = 0
 ANTSHRIKE = 1
 ANTWREN = 2
 OTHER = 3
-
-def vec_length(vec):
-    '''return length of a vector in x,y coordinates'''
-    x,y = vec
-    return math.sqrt(x**2 + y**2)
     
 ### TODO: Code up territories for birds. The territory effect on direction
 ### is that birds drop out of the flock when the flock crosses the boundary.
@@ -46,7 +34,7 @@ class World:
         self.ymax=400
 
     def random_coords(self):
-        return [random.uniform(0,self.xmax), random.uniform(0,self.ymax)]
+        return np.array([random.uniform(0,self.xmax), random.uniform(0,self.ymax)])
 
     def add_species_pair(self, species,coords=None):
         '''add a pair of a given species at a random location.
@@ -55,7 +43,7 @@ class World:
         neighborhood = 20
         coords = coords or self.random_coords()
         coords1 = coords
-        coords2 = [i+random.choice([-1,1])*random.uniform(Bird.rad,neighborhood) for i in coords]
+        coords2 = np.array([i+random.choice([-1,1])*random.uniform(Bird.rad,neighborhood) for i in coords])
         bird1 = Bird(species, self, coords1)
         bird2 = Bird(species, self, coords2)
         self.flock.append(bird1)
@@ -69,16 +57,16 @@ class Bird:
     rad = 5 #each bird has a radius of space.
     percept = 2000 #each bird has a radius of perception.
     target_location = None ## antshrikes (occasionally antwrens) have a target in the world
-
+    mate_max_distance = 20
     
     def __init__(self, species, world, coords):
         self.species = species
         self.world = world
         self.coords = coords
-        self.direction = [0,0] ## in x,y coordinates, don't go anywhere.
+        self.direction = np.array([0,0]) ## in x,y coordinates, don't go anywhere.
         if self.species == ANTSHRIKE:
             self.color = "purple"
-            self.target = world.random_coords() # random target location.
+            self.target_location = world.random_coords() # random target location.
         elif self.species == ANTWREN:
             self.color = "green"
         else:
@@ -92,7 +80,12 @@ class Bird:
             return True
         else:
             return False
-    
+
+    def calc_donut_dist(self,other_bird):
+        ''' take periodic boundaries into account when calculating
+        the distance between birds in the x,y coordinate system.'''
+        pass
+        
     def calc_direction_vec(self):
         ''' the direction: weighted average of position of all birds in the 
         flock (within perception radius). 
@@ -105,59 +98,46 @@ class Bird:
         for bird in self.world.flock:
             if self.observes(bird):
                 seen_birds.append(bird)
-        my_x, my_y = self.coords
-        
-        my_dir_vec = [0,0]
-        if self.target_location:
-            dir_vec = [self.target_location[0] - my_x, self.target_location[1] - my_y]
-            dir_vec_len = vec_length(dir_vec)
-            if dir_vec_len > 0:
-                unit_dir_vec = [i/dir_vec_len for i in dir_vec]
-                my_dir_vec = [attraction_matrix[self.species][0] * i for i in unit_dir_vec]
-        bird_weight = 1/len(seen_birds)
-        for rel_bird in seen_birds:
-            other_species = rel_bird.species
-            other_coords = rel_bird.coords
-            other_x, other_y = other_coords
+        my_dir_vec = np.array([0,0])
+        if self.target_location is not None:
+            dir_vec = self.target_location - self.coords
+            dir_vec_length = np.linalg.norm(dir_vec)
+            if dir_vec_length:
+                unit_dir_vec = dir_vec/dir_vec_length
+                my_dir_vec = attraction_matrix[self.species][0] * unit_dir_vec
+        bird_weight = 1/len(seen_birds) if len(seen_birds) else 0
+        for other_bird in seen_birds:
             ## my_dir_vec is a weighted sum of unit vectors in the direction
             ## of other birds in the flock and a desired direction.
             ## if the particular bird is too close, then move in the opposite direction.
-            bird_dist_vec = ([other_x - my_x, other_y - my_y])
-            bird_dist_vec_length = vec_length(bird_dist_vec)
-            if bird_dist_vec_length > 0:
-                bird_unit_vec = [i/bird_dist_vec_length for i in bird_dist_vec]
-                my_dir_vec = [i + attraction_matrix[self.species][rel_bird.species]*j for i,j in zip(my_dir_vec,bird_unit_vec)]
+            bird_dist_vec = other_bird.coords - self.coords
+            bird_dist_vec_length = np.linalg.norm(bird_dist_vec)
+            bird_unit_vec = bird_dist_vec/bird_dist_vec_length if bird_dist_vec_length > 0 else np.array([0,0])
+            ## if mate is too far, go toward mate.
+            if other_bird.species == bird.species and bird_dist_vec_length > bird.mate_max_distance:
+                my_dir_vec = np.array(bird_dist_vec/bird_dist_vec_length)
+                break # don't worry about other birds in the flock, only the mate!
+            if bird_dist_vec_length < bird.rad: ## too close to the other bird.
+                my_dir_vec = np.array([i - attraction_matrix[self.species][other_bird.species]*j for i,j in zip(my_dir_vec,bird_unit_vec)])
+            else: # move toward each other
+                my_dir_vec = np.array([i + attraction_matrix[self.species][other_bird.species]*j for i,j in zip(my_dir_vec,bird_unit_vec)])
         self.direction = my_dir_vec
 
     def move(self):
-        self.coords = [i+j for i,j in zip(self.coords,self.direction)]
-        self.adjust_coords()
-        
-    def adjust_coords(self):
-        '''adjust coordinates of bird, assuming donut world'''
-        x, y = self.coords
-        if x < 0:
-            x = self.world.xmax + x
-        elif x > self.world.xmax:
-            x = x - self.world.xmax
-        if y < 0:
-            y = self.world.ymax + y
-        elif y > self.world.ymax:
-            y = y - self.world.ymax
-        self.coords = x, y
-
-        
+        self.coords = self.coords + self.direction
+                
 def update(i, fig, scat, world):
     '''callback function for the animation, also one step in the world '''
     for bird in world.flock:
         #print(bird.coords)
         bird.calc_direction_vec()
-        bird.move() # this updates the birds coordinates.
-    flocka_x = [bird.coords[0] for bird in world.flock]
-    flocka_y = [bird.coords[1] for bird in world.flock]
+        bird.move()
+    ## positions don't wrapped around, but the image maps to the
+    ## modulus of the periodic boundaries.
+    flocka_x = [bird.coords[0] % world.xmax for bird in world.flock]
+    flocka_y = [bird.coords[1] % world.ymax  for bird in world.flock]
     scat = plt.scatter(flocka_x,flocka_y)
     return scat,
-
 
 def main():
 
@@ -183,6 +163,7 @@ def main():
     scat.set_alpha(0.8)
     ani = animation.FuncAnimation(fig, update, fargs=(fig,scat,amazon_donut),
                                   frames=time_steps, interval=100)
+    #ani.save('bird.mp4', fps=15)
     plt.show()
     
 main()
